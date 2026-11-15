@@ -1,0 +1,42 @@
+#!/bin/sh
+# Rewrites rpm/icloud-for-omarchy.spec.sources with the sha256 of the upstream
+# release tarball that the spec's Source0 points at.
+#
+# Unlike the app repos this pattern comes from, upstream is NOT ours: the hash
+# is re-pinned for a version that already exists as a tag on
+# github.com/ferdousbhai/icloud-for-omarchy, and it changes whenever upstream
+# retags. GitHub generates the archive from the tag, so the hash cannot be
+# known before the tag exists. COPR verifies the hash when it fetches the
+# sources, so a stale one fails the build rather than shipping the wrong tree.
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+NAME=icloud-for-omarchy
+UPSTREAM_REPO=ferdousbhai/icloud-for-omarchy
+SPEC="$ROOT/rpm/$NAME.spec"
+
+VERSION="$(sed -n 's/^Version:[[:space:]]*//p' "$SPEC" | head -1)"
+if [ -z "$VERSION" ]; then
+    echo "spec-sources: no Version: line in $SPEC" >&2
+    exit 1
+fi
+
+URL="https://github.com/$UPSTREAM_REPO/archive/refs/tags/v$VERSION/$NAME-$VERSION.tar.gz"
+TARBALL="$NAME-$VERSION.tar.gz"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+echo "spec-sources: fetching $URL"
+curl -sSfL "$URL" -o "$TMP/$TARBALL"
+
+# Proof it is the right tree, not just a redirect body. The marker has to be an
+# UPSTREAM path — the spec lives in this repository, so it is not in the
+# archive the way it is for airgraph and huru-calendar.
+tar -tzf "$TMP/$TARBALL" "$NAME-$VERSION/Cargo.toml" >/dev/null
+tar -tzf "$TMP/$TARBALL" "$NAME-$VERSION/packaging/PKGBUILD" >/dev/null
+
+HASH="$(sha256sum "$TMP/$TARBALL" | cut -d' ' -f1)"
+printf '%s  %s\n' "$HASH" "$TARBALL" > "$ROOT/rpm/$NAME.spec.sources"
+echo "spec-sources: wrote $ROOT/rpm/$NAME.spec.sources"
+cat "$ROOT/rpm/$NAME.spec.sources"
